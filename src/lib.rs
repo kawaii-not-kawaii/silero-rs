@@ -165,7 +165,8 @@ impl VadSession {
         if ![8000_usize, 16000].contains(&config.sample_rate) {
             bail!("Unsupported sample rate, use 8000 or 16000!");
         }
-        let env = ort::init().build()?;
+        // ort 2.0.0-rc.15 allows only one Environment per process; use the shared one.
+        let env = shared_environment()?;
         let model = Session::builder(&env)?
             .with_optimization_level(GraphOptimizationLevel::Level3)
             .map_err(|e| anyhow::anyhow!(e.message().to_owned()))?
