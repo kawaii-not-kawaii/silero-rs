@@ -34,6 +34,7 @@ pub struct VadConfig {
 /// and feed the audio into it.
 pub struct VadSession {
     config: VadConfig,
+    _env: ort::environment::Environment,
     model: Session, // TODO: would this be safe to share? does the runtime graph hold any state?
     h_tensor: ArrayBase<OwnedRepr<f32>, Ix3>,
     c_tensor: ArrayBase<OwnedRepr<f32>, Ix3>,
@@ -139,9 +140,12 @@ impl VadSession {
         if ![8000_usize, 16000].contains(&config.sample_rate) {
             bail!("Unsupported sample rate, use 8000 or 16000!");
         }
-        let model = Session::builder()?
-            .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .with_intra_threads(4)?
+        let env = ort::init().build()?;
+        let model = Session::builder(&env)?
+            .with_optimization_level(GraphOptimizationLevel::Level3)
+            .map_err(|e| anyhow::anyhow!(e.message().to_owned()))?
+            .with_intra_threads(4)
+            .map_err(|e| anyhow::anyhow!(e.message().to_owned()))?
             .commit_from_memory(model_bytes)?;
         let h_tensor = Array3::<f32>::zeros((2, 1, 64));
         let c_tensor = Array3::<f32>::zeros((2, 1, 64));
@@ -149,6 +153,7 @@ impl VadSession {
 
         Ok(Self {
             config,
+            _env: env,
             model,
             h_tensor,
             c_tensor,
