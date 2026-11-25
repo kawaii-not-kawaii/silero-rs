@@ -16,6 +16,8 @@ use tracing::trace;
 pub mod audio_resampler;
 pub mod errors;
 
+static SHARED_ENV: std::sync::Mutex<Option<ort::environment::Environment>> = std::sync::Mutex::new(None);
+
 /// Parameters used to configure a vad session. These will determine the sensitivity and switching
 /// speed of detection.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -34,7 +36,6 @@ pub struct VadConfig {
 /// and feed the audio into it.
 pub struct VadSession {
     config: VadConfig,
-    _env: ort::environment::Environment,
     model: Session, // TODO: would this be safe to share? does the runtime graph hold any state?
     h_tensor: ArrayBase<OwnedRepr<f32>, Ix3>,
     c_tensor: ArrayBase<OwnedRepr<f32>, Ix3>,
@@ -50,6 +51,30 @@ pub struct VadSession {
 
     /// Cached current active samples
     cached_active_speech: Vec<f32>,
+}
+
+/// ort 2.0.0-rc.15 allows a single `ort::Environment` per process. Embedding
+/// applications that already created one (e.g. to load a specific ONNX Runtime
+/// library) register it here before creating [`VadSession`]s. If none is
+/// registered, the first session creates one with telemetry disabled.
+pub fn set_environment(env: &ort::environment::Environment) {
+    let mut guard = SHARED_ENV.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if guard.is_none() {
+        *guard = Some(env.clone());
+    }
+}
+
+fn shared_environment() -> Result<ort::environment::Environment> {
+    let mut guard = SHARED_ENV.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(env) = guard.as_ref() {
+        return Ok(env.clone());
+    }
+    let env = ort::init()
+        .with_telemetry(false)
+        .build()
+        .map_err(|error| anyhow::anyhow!("failed to create ort environment: {error}"))?;
+    *guard = Some(env.clone());
+    Ok(env)
 }
 
 impl fmt::Debug for VadSession {
@@ -153,7 +178,6 @@ impl VadSession {
 
         Ok(Self {
             config,
-            _env: env,
             model,
             h_tensor,
             c_tensor,
